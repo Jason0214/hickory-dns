@@ -10,8 +10,6 @@ use core::fmt::Display;
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
-#[cfg(not(feature = "std"))]
-use std::net::SocketAddr;
 #[cfg(feature = "std")]
 use std::net::SocketAddr;
 

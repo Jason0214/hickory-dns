@@ -324,9 +324,9 @@ The Client has a few features which can be disabled for different reasons when e
 - `mdns` _EXPERIMENTAL_
   Enables the experimental mDNS features as well as DNS-SD. This currently has known issues.
 
-- `std`/`embedded`
-  The `proto` crate can run in a `no_std` mode by disabling `default-features` and instead enabling the `embedded` feature.
-  If you use this feature, ideally you should call `seed_rng(random_seed)` with a secure seed.
+- `std`
+  The `proto` crate can run in a `no_std` mode by disabling `default-features`.
+  If you use this feature, you should call `seed_rng(random_seed)` with a secure seed!
 
 Using custom features in dependencies:
 

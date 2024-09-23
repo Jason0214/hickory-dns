@@ -31,11 +31,6 @@
 
 //! Hickory DNS Protocol library
 
-#[cfg(not(any(feature = "std", feature = "embedded")))]
-compile_error!(
-    "Either the 'std' or the 'embedded' feature need to be enabled for hickory to work. Likely, you want to enable 'std'."
-);
-
 #[cfg(feature = "std")]
 extern crate std;
 
