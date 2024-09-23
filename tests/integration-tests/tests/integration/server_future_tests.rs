@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -5,7 +6,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use futures::{future, Future, FutureExt};
+use futures::{future, FutureExt};
+#[cfg(feature = "dns-over-rustls")]
+use rustls::{
+    pki_types::{CertificateDer, PrivateKeyDer},
+    ClientConfig, RootCertStore,
+};
 use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 use tokio::runtime::Runtime;
@@ -13,24 +19,18 @@ use tokio::runtime::Runtime;
 use hickory_client::client::*;
 use hickory_client::tcp::TcpClientConnection;
 use hickory_client::udp::UdpClientConnection;
+use hickory_integration::example_authority::create_example;
+#[cfg(feature = "dns-over-rustls")]
+use hickory_integration::tls_client_connection::TlsClientConnection;
 use hickory_proto::error::ProtoError;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::A;
 use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
+#[cfg(feature = "dns-over-rustls")]
+use hickory_proto::runtime::iocompat::AsyncIoTokioAsStd;
 use hickory_proto::xfer::DnsRequestSender;
-
 use hickory_server::authority::{Authority, Catalog};
 use hickory_server::ServerFuture;
-
-use hickory_integration::example_authority::create_example;
-
-#[cfg(feature = "dns-over-rustls")]
-use hickory_integration::tls_client_connection::TlsClientConnection;
-#[cfg(feature = "dns-over-rustls")]
-use rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer},
-    RootCertStore,
-};
 
 #[test]
 #[allow(clippy::uninlined_format_args)]
@@ -306,9 +306,7 @@ fn lazy_tls_client(
     ipaddr: SocketAddr,
     dns_name: String,
     cert_chain: Vec<CertificateDer<'static>>,
-) -> TlsClientConnection<hickory_proto::iocompat::AsyncIoTokioAsStd<tokio::net::TcpStream>> {
-    use rustls::ClientConfig;
-
+) -> TlsClientConnection<AsyncIoTokioAsStd<tokio::net::TcpStream>> {
     let mut root_store = RootCertStore::empty();
     let (_, ignored) = root_store.add_parsable_certificates(cert_chain);
     assert_eq!(ignored, 0, "bad certificate!");

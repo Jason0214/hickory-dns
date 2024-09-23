@@ -9,16 +9,18 @@ use alloc::boxed::Box;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use std::fmt::{self, Display};
+use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 
-use futures_util::future::{Future, FutureExt, TryFutureExt};
+use futures_util::future::{FutureExt, TryFutureExt};
 use futures_util::stream::{Stream, StreamExt, TryStreamExt};
 
 use crate::error::ProtoError;
 use crate::multicast::mdns_stream::{MDNS_IPV4, MDNS_IPV6};
 use crate::multicast::{MdnsQueryType, MdnsStream};
+use crate::runtime::TokioTime;
 use crate::xfer::{DnsClientStream, SerialMessage};
-use crate::{BufDnsStreamHandle, TokioTime};
+use crate::BufDnsStreamHandle;
 
 /// A UDP client stream of DNS binary packets
 #[must_use = "futures do nothing unless polled"]

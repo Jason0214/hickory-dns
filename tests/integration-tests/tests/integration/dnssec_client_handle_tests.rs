@@ -6,18 +6,18 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use futures::executor::block_on;
 use tokio::net::TcpStream as TokioTcpStream;
-use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::runtime::Runtime;
 
 use hickory_client::client::{AsyncClient, ClientHandle, MemoizeClientHandle};
-use hickory_proto::iocompat::AsyncIoTokioAsStd;
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::dnssec::{Proof, TrustAnchor};
 use hickory_proto::rr::rdata::A;
 use hickory_proto::rr::Name;
 use hickory_proto::rr::{DNSClass, RData, RecordType};
+use hickory_proto::runtime::iocompat::AsyncIoTokioAsStd;
+use hickory_proto::runtime::TokioRuntimeProvider;
 use hickory_proto::tcp::TcpClientStream;
-use hickory_proto::udp::{UdpClientConnect, UdpClientStream};
+use hickory_proto::udp::UdpClientStream;
 use hickory_proto::DnssecDnsHandle;
 use hickory_server::authority::{Authority, Catalog};
 
@@ -242,7 +242,7 @@ where
         .block_on(client)
         .expect("failed to create new client");
 
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
     let client = MemoizeClientHandle::new(client);
     let secure_client = DnssecDnsHandle::with_trust_anchor(client, trust_anchor);
 
@@ -275,10 +275,10 @@ where
 
     let io_loop = Runtime::new().unwrap();
     let addr: SocketAddr = ("8.8.8.8", 53).to_socket_addrs().unwrap().next().unwrap();
-    let stream: UdpClientConnect<TokioUdpSocket> = UdpClientStream::new(addr);
+    let stream = UdpClientStream::new(addr, TokioRuntimeProvider::new());
     let client = AsyncClient::connect(stream);
     let (client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     let client = MemoizeClientHandle::new(client);
     let secure_client = DnssecDnsHandle::new(client);
@@ -316,7 +316,7 @@ where
     let (stream, sender) = TcpClientStream::<AsyncIoTokioAsStd<TokioTcpStream>>::new(addr);
     let client = AsyncClient::new(Box::new(stream), sender, None);
     let (client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     let client = MemoizeClientHandle::new(client);
     let secure_client = DnssecDnsHandle::new(client);

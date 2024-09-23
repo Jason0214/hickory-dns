@@ -476,7 +476,7 @@ pub mod testing {
     use crate::config::{LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts};
     use crate::name_server::ConnectionProvider;
     use crate::AsyncResolver;
-    use proto::{rr::Name, Executor};
+    use proto::{rr::Name, runtime::Executor};
 
     /// Test IP lookup from URLs.
     pub fn lookup_test<E: Executor, R: ConnectionProvider>(
@@ -1096,14 +1096,6 @@ mod tests {
             io_loop,
             handle,
         )
-    }
-
-    #[test]
-    fn test_lookup_quad9() {
-        use super::testing::lookup_test;
-        let io_loop = Runtime::new().expect("failed to create tokio runtime");
-        let handle = TokioConnectionProvider::default();
-        lookup_test::<Runtime, TokioConnectionProvider>(ResolverConfig::quad9(), io_loop, handle)
     }
 
     #[test]

@@ -2,7 +2,9 @@
 #![allow(clippy::dbg_macro)]
 
 use std::{
-    fmt, io, mem,
+    fmt,
+    future::poll_fn,
+    io, mem,
     net::SocketAddr,
     pin::Pin,
     sync::{
@@ -27,9 +29,10 @@ use hickory_proto::{
     error::ProtoError,
     op::Message,
     rr::Record,
+    runtime::TokioTime,
     serialize::binary::{BinDecodable, BinDecoder, BinEncoder},
     xfer::{DnsClientStream, DnsMultiplexer, DnsMultiplexerConnect, SerialMessage, StreamReceiver},
-    BufDnsStreamHandle, TokioTime,
+    BufDnsStreamHandle,
 };
 use hickory_server::{
     authority::{Catalog, MessageRequest, MessageResponse},
@@ -81,7 +84,7 @@ impl TestResponseHandler {
     }
 
     fn into_inner(self) -> impl Future<Output = Vec<u8>> {
-        future::poll_fn(move |_| {
+        poll_fn(move |_| {
             if self
                 .message_ready
                 .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)

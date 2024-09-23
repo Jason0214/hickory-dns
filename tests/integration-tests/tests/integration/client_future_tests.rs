@@ -8,10 +8,7 @@ use futures::{Future, FutureExt, TryFutureExt};
 use test_support::subscribe;
 #[cfg(feature = "dnssec")]
 use time::Duration;
-use tokio::{
-    net::{TcpStream as TokioTcpStream, UdpSocket as TokioUdpSocket},
-    runtime::Runtime,
-};
+use tokio::{net::TcpStream as TokioTcpStream, runtime::Runtime};
 
 #[cfg(all(feature = "dnssec", feature = "sqlite"))]
 use hickory_client::client::Signer;
@@ -19,14 +16,16 @@ use hickory_client::{
     client::{AsyncClient, ClientHandle},
     error::ClientErrorKind,
 };
+use hickory_integration::{
+    example_authority::create_example, NeverReturnsClientStream, TestClientStream,
+};
 #[cfg(feature = "dnssec")]
 use hickory_proto::rr::{dnssec::SigSigner, Record};
+#[cfg(all(feature = "dnssec", feature = "sqlite"))]
+use hickory_proto::runtime::TokioTime;
 #[cfg(feature = "dnssec")]
 use hickory_proto::xfer::{DnsExchangeBackground, DnsMultiplexer};
-#[cfg(all(feature = "dnssec", feature = "sqlite"))]
-use hickory_proto::TokioTime;
 use hickory_proto::{
-    iocompat::AsyncIoTokioAsStd,
     op::{Edns, Message, MessageType, OpCode, Query, ResponseCode},
     rr::{
         rdata::{
@@ -35,16 +34,13 @@ use hickory_proto::{
         },
         DNSClass, Name, RData, RecordSet, RecordType,
     },
+    runtime::{iocompat::AsyncIoTokioAsStd, TokioRuntimeProvider},
     tcp::TcpClientStream,
     udp::UdpClientStream,
     xfer::FirstAnswer,
     DnsHandle,
 };
 use hickory_server::authority::{Authority, Catalog};
-
-use hickory_integration::{
-    example_authority::create_example, NeverReturnsClientStream, TestClientStream,
-};
 
 #[test]
 fn test_query_nonet() {
@@ -58,7 +54,7 @@ fn test_query_nonet() {
     let (stream, sender) = TestClientStream::new(Arc::new(StdMutex::new(catalog)));
     let client = AsyncClient::new(stream, sender, None);
     let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     io_loop.block_on(test_query(&mut client));
     io_loop.block_on(test_query(&mut client));
@@ -68,10 +64,10 @@ fn test_query_nonet() {
 fn test_query_udp_ipv4() {
     let io_loop = Runtime::new().unwrap();
     let addr: SocketAddr = ("8.8.8.8", 53).to_socket_addrs().unwrap().next().unwrap();
-    let stream = UdpClientStream::<TokioUdpSocket>::new(addr);
+    let stream = UdpClientStream::new(addr, TokioRuntimeProvider::new());
     let client = AsyncClient::connect(stream);
     let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // TODO: timeouts on these requests so that the test doesn't hang
     io_loop.block_on(test_query(&mut client));
@@ -88,10 +84,10 @@ fn test_query_udp_ipv6() {
         .unwrap()
         .next()
         .unwrap();
-    let stream = UdpClientStream::<TokioUdpSocket>::new(addr);
+    let stream = UdpClientStream::new(addr, TokioRuntimeProvider::new());
     let client = AsyncClient::connect(stream);
     let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // TODO: timeouts on these requests so that the test doesn't hang
     io_loop.block_on(test_query(&mut client));
@@ -106,7 +102,7 @@ fn test_query_tcp_ipv4() {
     let (stream, sender) = TcpClientStream::<AsyncIoTokioAsStd<TokioTcpStream>>::new(addr);
     let client = AsyncClient::new(stream, sender, None);
     let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // TODO: timeouts on these requests so that the test doesn't hang
     io_loop.block_on(test_query(&mut client));
@@ -125,7 +121,7 @@ fn test_query_tcp_ipv6() {
     let (stream, sender) = TcpClientStream::<AsyncIoTokioAsStd<TokioTcpStream>>::new(addr);
     let client = AsyncClient::new(stream, sender, None);
     let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // TODO: timeouts on these requests so that the test doesn't hang
     io_loop.block_on(test_query(&mut client));
@@ -161,7 +157,7 @@ fn test_query_https() {
             .build::<AsyncIoTokioAsStd<TokioTcpStream>>(addr, "cloudflare-dns.com".to_string()),
     );
     let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // TODO: timeouts on these requests so that the test doesn't hang
     io_loop.block_on(test_query(&mut client));
@@ -266,7 +262,7 @@ fn test_notify() {
     let (stream, sender) = TestClientStream::new(Arc::new(StdMutex::new(catalog)));
     let client = AsyncClient::new(stream, sender, None);
     let (mut client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     let name = Name::from_str("ping.example.com").unwrap();
 
@@ -337,7 +333,7 @@ async fn create_sig0_ready_client() -> (
 fn test_create() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // create a record
     let record = Record::from_rdata(
@@ -383,7 +379,7 @@ fn test_create() {
 fn test_create_multi() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // create a record
     let record = Record::from_rdata(
@@ -440,7 +436,7 @@ fn test_create_multi() {
 fn test_append() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // append a record
     let record = Record::from_rdata(
@@ -518,7 +514,7 @@ fn test_append() {
 fn test_append_multi() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // append a record
     let record = Record::from_rdata(
@@ -603,7 +599,7 @@ fn test_append_multi() {
 fn test_compare_and_swap() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // create a record
     let record = Record::from_rdata(
@@ -659,7 +655,7 @@ fn test_compare_and_swap() {
 fn test_compare_and_swap_multi() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // create a record
     let mut current = RecordSet::with_ttl(
@@ -725,7 +721,7 @@ fn test_compare_and_swap_multi() {
 fn test_delete_by_rdata() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // append a record
     let record1 = Record::from_rdata(
@@ -776,7 +772,7 @@ fn test_delete_by_rdata() {
 fn test_delete_by_rdata_multi() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // append a record
     let mut rrset = RecordSet::with_ttl(
@@ -853,7 +849,7 @@ fn test_delete_by_rdata_multi() {
 fn test_delete_rrset() {
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // append a record
     let mut record = Record::from_rdata(
@@ -904,7 +900,7 @@ fn test_delete_all() {
 
     let io_loop = Runtime::new().unwrap();
     let ((mut client, bg), origin) = io_loop.block_on(create_sig0_ready_client());
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     // append a record
     let mut record = Record::from_rdata(
@@ -984,7 +980,7 @@ fn test_timeout_query_nonet() {
     let client =
         AsyncClient::with_timeout(stream, sender, std::time::Duration::from_millis(1), None);
     let (client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     test_timeout_query(client, io_loop);
 }
@@ -1001,11 +997,14 @@ fn test_timeout_query_udp() {
         .next()
         .unwrap();
 
-    let stream =
-        UdpClientStream::<TokioUdpSocket>::with_timeout(addr, std::time::Duration::from_millis(1));
+    let stream = UdpClientStream::with_timeout(
+        addr,
+        std::time::Duration::from_millis(1),
+        TokioRuntimeProvider::new(),
+    );
     let client = AsyncClient::connect(stream);
     let (client, bg) = io_loop.block_on(client).expect("client failed to connect");
-    hickory_proto::spawn_bg(&io_loop, bg);
+    hickory_proto::runtime::spawn_bg(&io_loop, bg);
 
     test_timeout_query(client, io_loop);
 }

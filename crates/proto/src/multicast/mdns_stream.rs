@@ -10,11 +10,12 @@ use alloc::sync::Arc;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 use std;
+use std::future::Future;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use futures_util::stream::{Stream, StreamExt};
-use futures_util::{future, future::Future, ready, FutureExt, TryFutureExt};
+use futures_util::{future, ready, FutureExt, TryFutureExt};
 use once_cell::sync::Lazy;
 use rand;
 use rand::distributions::{uniform::Uniform, Distribution};
@@ -23,6 +24,7 @@ use tokio::net::UdpSocket;
 use tracing::{debug, trace};
 
 use crate::multicast::MdnsQueryType;
+use crate::runtime::TokioRuntimeProvider;
 use crate::udp::UdpStream;
 use crate::xfer::SerialMessage;
 use crate::BufDnsStreamHandle;
@@ -45,7 +47,7 @@ pub struct MdnsStream {
     /// Multicast address used for mDNS queries
     multicast_addr: SocketAddr,
     /// This is used for sending and (directly) receiving messages
-    datagram: Option<UdpStream<UdpSocket>>,
+    datagram: Option<UdpStream<TokioRuntimeProvider>>,
     // FIXME: like UdpStream, this Arc is unnecessary, only needed for temp async/await capture below
     /// In one-shot multicast, this will not join the multicast group
     multicast: Option<Arc<UdpSocket>>,

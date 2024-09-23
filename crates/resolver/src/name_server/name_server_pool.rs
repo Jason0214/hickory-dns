@@ -16,8 +16,12 @@ use futures_util::stream::{once, FuturesUnordered, Stream, StreamExt};
 use hickory_proto::error::ProtoErrorKind;
 use smallvec::SmallVec;
 
+use proto::error::ProtoError;
+#[cfg(test)]
+#[cfg(feature = "tokio-runtime")]
+use proto::runtime::TokioRuntimeProvider;
+use proto::runtime::{RuntimeProvider, Time};
 use proto::xfer::{DnsHandle, DnsRequest, DnsResponse, FirstAnswer};
-use proto::Time;
 use tracing::debug;
 
 use rand::thread_rng as rng;
@@ -26,11 +30,6 @@ use rand::Rng;
 use crate::config::{NameServerConfigGroup, ResolverConfig, ResolverOpts, ServerOrderingStrategy};
 use crate::name_server::connection_provider::{ConnectionProvider, GenericConnector};
 use crate::name_server::name_server::NameServer;
-use crate::name_server::RuntimeProvider;
-#[cfg(test)]
-#[cfg(feature = "tokio-runtime")]
-use crate::name_server::TokioRuntimeProvider;
-use crate::proto::error::ProtoError;
 
 /// Abstract interface for mocking purpose
 #[derive(Clone)]
@@ -416,8 +415,8 @@ mod tests {
     use super::*;
     use crate::config::NameServerConfig;
     use crate::config::Protocol;
-    use crate::name_server::TokioRuntimeProvider;
-    use crate::name_server::{GenericNameServer, TokioConnectionProvider};
+    use crate::name_server::connection_provider::TokioConnectionProvider;
+    use crate::name_server::GenericNameServer;
 
     #[ignore]
     // because of there is a real connection that needs a reasonable timeout

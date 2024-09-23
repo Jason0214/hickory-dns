@@ -555,7 +555,7 @@ mod test {
     }
 
     impl DnsClientStream for MockClientStream {
-        type Time = crate::TokioTime;
+        type Time = crate::runtime::TokioTime;
 
         fn name_server_addr(&self) -> SocketAddr {
             self.addr

@@ -4,11 +4,14 @@
 //!
 //! TODO: this module needs some serious refactoring and normalization.
 
-use core::fmt::{Debug, Display};
-#[cfg(not(feature = "std"))]
-use core::net::SocketAddr;
+use core::fmt::Debug;
+#[cfg(feature = "std")]
+use core::fmt::Display;
+use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+#[cfg(not(feature = "std"))]
+use std::net::SocketAddr;
 #[cfg(feature = "std")]
 use std::net::SocketAddr;
 
@@ -16,7 +19,6 @@ use std::net::SocketAddr;
 use futures_channel::mpsc;
 #[cfg(feature = "std")]
 use futures_channel::oneshot;
-use futures_util::future::Future;
 use futures_util::ready;
 #[cfg(feature = "std")]
 use futures_util::stream::{Fuse, Peekable};
@@ -24,8 +26,10 @@ use futures_util::stream::{Stream, StreamExt};
 #[cfg(feature = "std")]
 use tracing::{debug, warn};
 
-use crate::error::*;
-use crate::Time;
+use crate::error::{ProtoError, ProtoErrorKind};
+
+#[cfg(feature = "std")]
+use crate::runtime::Time;
 
 #[cfg(feature = "std")]
 mod dns_exchange;
@@ -71,6 +75,7 @@ fn ignore_send<M, T>(result: Result<M, mpsc::TrySendError<T>>) {
 }
 
 /// A non-multiplexed stream of Serialized DNS messages
+#[cfg(feature = "std")]
 pub trait DnsClientStream:
     Stream<Item = Result<SerialMessage, ProtoError>> + Display + Send
 {

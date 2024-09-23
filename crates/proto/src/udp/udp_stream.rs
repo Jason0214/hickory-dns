@@ -6,10 +6,9 @@
 // copied, modified, or distributed except according to those terms.
 
 use crate::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use alloc::sync::Arc;
-use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+use std::future::poll_fn;
 use std::io;
 
 use alloc::boxed::Box;
@@ -20,18 +19,10 @@ use rand;
 use rand::distributions::{uniform::Uniform, Distribution};
 use tracing::{debug, warn};
 
+use crate::runtime::RuntimeProvider;
+use crate::runtime::Time;
 use crate::udp::MAX_RECEIVE_BUFFER_SIZE;
 use crate::xfer::{BufDnsStreamHandle, SerialMessage, StreamReceiver};
-use crate::Time;
-
-pub(crate) type UdpCreator<S> = Arc<
-    dyn Send
-        + Sync
-        + (Fn(
-            SocketAddr, // local addr
-            SocketAddr, // server addr
-        ) -> Pin<Box<dyn Send + (Future<Output = Result<S, std::io::Error>>)>>),
->;
 
 /// Trait for DnsUdpSocket
 #[async_trait]
@@ -53,7 +44,7 @@ where
     /// Receive data from the socket and returns the number of bytes read and the address from
     /// where the data came on success.
     async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        futures_util::future::poll_fn(|cx| self.poll_recv_from(cx, buf)).await
+        poll_fn(|cx| self.poll_recv_from(cx, buf)).await
     }
 
     /// Poll once to send data to the given address.
@@ -66,7 +57,7 @@ where
 
     /// Send data to the given address.
     async fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
-        futures_util::future::poll_fn(|cx| self.poll_send_to(cx, buf, target)).await
+        poll_fn(|cx| self.poll_send_to(cx, buf, target)).await
     }
 }
 
@@ -85,12 +76,12 @@ pub trait UdpSocket: DnsUdpSocket {
 
 /// A UDP stream of DNS binary packets
 #[must_use = "futures do nothing unless polled"]
-pub struct UdpStream<S: Send> {
-    socket: S,
+pub struct UdpStream<P: RuntimeProvider> {
+    socket: P::Udp,
     outbound_messages: StreamReceiver,
 }
 
-impl<S: UdpSocket + Send + 'static> UdpStream<S> {
+impl<P: RuntimeProvider> UdpStream<P> {
     /// This method is intended for client connections, see `with_bound` for a method better for
     ///  straight listening. It is expected that the resolver wrapper will be responsible for
     ///  creating and managing new UdpStreams such that each new client would have a random port
@@ -108,6 +99,7 @@ impl<S: UdpSocket + Send + 'static> UdpStream<S> {
     pub fn new(
         remote_addr: SocketAddr,
         bind_addr: Option<SocketAddr>,
+        provider: P,
     ) -> (
         Box<dyn Future<Output = Result<Self, io::Error>> + Send + Unpin>,
         BufDnsStreamHandle,
@@ -116,7 +108,7 @@ impl<S: UdpSocket + Send + 'static> UdpStream<S> {
 
         // TODO: allow the bind address to be specified...
         // constructs a future for getting the next randomly bound port to a UdpSocket
-        let next_socket = NextRandomUdpSocket::new(&remote_addr, &bind_addr);
+        let next_socket = NextRandomUdpSocket::new(remote_addr, bind_addr, provider);
 
         // This set of futures collapses the next udp socket into a stream which can be used for
         //  sending and receiving udp packets.
@@ -129,7 +121,7 @@ impl<S: UdpSocket + Send + 'static> UdpStream<S> {
     }
 }
 
-impl<S: DnsUdpSocket + Send + 'static> UdpStream<S> {
+impl<P: RuntimeProvider> UdpStream<P> {
     /// Initialize the Stream with an already bound socket. Generally this should be only used for
     ///  server listening sockets. See `new` for a client oriented socket. Specifically, this there
     ///  is already a bound socket in this context, whereas `new` makes sure to randomize ports
@@ -144,7 +136,7 @@ impl<S: DnsUdpSocket + Send + 'static> UdpStream<S> {
     ///
     /// a tuple of a Future Stream which will handle sending and receiving messages, and a
     ///  handle which can be used to send messages into the stream.
-    pub fn with_bound(socket: S, remote_addr: SocketAddr) -> (Self, BufDnsStreamHandle) {
+    pub fn with_bound(socket: P::Udp, remote_addr: SocketAddr) -> (Self, BufDnsStreamHandle) {
         let (message_sender, outbound_messages) = BufDnsStreamHandle::new(remote_addr);
         let stream = Self {
             socket,
@@ -155,7 +147,7 @@ impl<S: DnsUdpSocket + Send + 'static> UdpStream<S> {
     }
 
     #[allow(unused)]
-    pub(crate) fn from_parts(socket: S, outbound_messages: StreamReceiver) -> Self {
+    pub(crate) fn from_parts(socket: P::Udp, outbound_messages: StreamReceiver) -> Self {
         Self {
             socket,
             outbound_messages,
@@ -163,14 +155,14 @@ impl<S: DnsUdpSocket + Send + 'static> UdpStream<S> {
     }
 }
 
-impl<S: Send> UdpStream<S> {
+impl<P: RuntimeProvider> UdpStream<P> {
     #[allow(clippy::type_complexity)]
-    fn pollable_split(&mut self) -> (&mut S, &mut StreamReceiver) {
+    fn pollable_split(&mut self) -> (&mut P::Udp, &mut StreamReceiver) {
         (&mut self.socket, &mut self.outbound_messages)
     }
 }
 
-impl<S: DnsUdpSocket + Send + 'static> Stream for UdpStream<S> {
+impl<P: RuntimeProvider> Stream for UdpStream<P> {
     type Item = Result<SerialMessage, io::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -213,22 +205,24 @@ impl<S: DnsUdpSocket + Send + 'static> Stream for UdpStream<S> {
 }
 
 #[must_use = "futures do nothing unless polled"]
-pub(crate) struct NextRandomUdpSocket<S> {
+pub(crate) struct NextRandomUdpSocket<P: RuntimeProvider> {
     name_server: SocketAddr,
     bind_address: SocketAddr,
-    closure: UdpCreator<S>,
-    marker: PhantomData<S>,
+    provider: P,
+    attempted: usize,
+    #[allow(clippy::type_complexity)]
+    future: Option<Pin<Box<dyn Send + Future<Output = io::Result<P::Udp>>>>>,
 }
 
-impl<S: UdpSocket + 'static> NextRandomUdpSocket<S> {
+impl<P: RuntimeProvider> NextRandomUdpSocket<P> {
     /// Creates a future for randomly binding to a local socket address for client connections,
     /// if no port is specified.
     ///
     /// If a port is specified in the bind address it is used.
-    pub(crate) fn new(name_server: &SocketAddr, bind_addr: &Option<SocketAddr>) -> Self {
+    pub(crate) fn new(name_server: SocketAddr, bind_addr: Option<SocketAddr>, provider: P) -> Self {
         let bind_address = match bind_addr {
-            Some(ba) => *ba,
-            None => match *name_server {
+            Some(ba) => ba,
+            None => match name_server {
                 SocketAddr::V4(..) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
                 SocketAddr::V6(..) => {
                     SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)), 0)
@@ -237,86 +231,74 @@ impl<S: UdpSocket + 'static> NextRandomUdpSocket<S> {
         };
 
         Self {
-            name_server: *name_server,
+            name_server,
             bind_address,
-            closure: Arc::new(|local_addr: _, _server_addr: _| S::bind(local_addr)),
-            marker: PhantomData,
+            provider,
+            attempted: 0,
+            future: None,
         }
     }
 }
 
-impl<S: DnsUdpSocket> NextRandomUdpSocket<S> {
-    /// Create a future with generator
-    pub(crate) fn new_with_closure(name_server: &SocketAddr, func: UdpCreator<S>) -> Self {
-        let bind_address = match *name_server {
-            SocketAddr::V4(..) => SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-            SocketAddr::V6(..) => {
-                SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)), 0)
-            }
-        };
-        Self {
-            name_server: *name_server,
-            bind_address,
-            closure: func,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<S: DnsUdpSocket + Send> Future for NextRandomUdpSocket<S> {
-    type Output = Result<S, io::Error>;
+impl<P: RuntimeProvider> Future for NextRandomUdpSocket<P> {
+    type Output = Result<P::Udp, io::Error>;
 
     /// polls until there is an available next random UDP port,
     /// if no port has been specified in bind_addr.
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.bind_address.port() == 0 {
-            // Per RFC 6056 Section 3.2:
-            //
-            // As mentioned in Section 2.1, the dynamic ports consist of the range
-            // 49152-65535.  However, ephemeral port selection algorithms should use
-            // the whole range 1024-65535.
-            let rand_port_range = Uniform::new_inclusive(1_024, u16::MAX);
-            let mut rand = rand::thread_rng();
-
-            for attempt in 0..10 {
-                let port = rand_port_range.sample(&mut rand);
-                let bind_addr = SocketAddr::new(self.bind_address.ip(), port);
-
-                // TODO: allow TTL to be adjusted...
-                // TODO: this immediate poll might be wrong in some cases...
-                match (*self.closure)(bind_addr, self.name_server)
-                    .as_mut()
-                    .poll(cx)
-                {
+        let this = self.get_mut();
+        loop {
+            this.future = match this.future.take() {
+                Some(mut future) => match future.as_mut().poll(cx) {
                     Poll::Ready(Ok(socket)) => {
                         debug!("created socket successfully");
                         return Poll::Ready(Ok(socket));
                     }
                     Poll::Ready(Err(err)) => match err.kind() {
-                        io::ErrorKind::AddrInUse => {
-                            debug!("unable to bind port, attempt: {}: {}", attempt, err);
+                        io::ErrorKind::AddrInUse if this.attempted < ATTEMPT_RANDOM + 1 => {
+                            debug!("unable to bind port, attempt: {}: {err}", this.attempted);
+                            this.attempted += 1;
+                            None
                         }
                         _ => {
                             debug!("failed to bind port: {}", err);
                             return Poll::Ready(Err(err));
                         }
                     },
-                    Poll::Pending => debug!("unable to bind port, attempt: {}", attempt),
+                    Poll::Pending => {
+                        debug!("unable to bind port, attempt: {}", this.attempted);
+                        this.future = Some(future);
+                        return Poll::Pending;
+                    }
+                },
+                None => {
+                    let bind_addr = match this.bind_address.port() {
+                        0 if this.attempted < ATTEMPT_RANDOM => {
+                            // Per RFC 6056 Section 3.2:
+                            //
+                            // As mentioned in Section 2.1, the dynamic ports consist of the range
+                            // 49152-65535.  However, ephemeral port selection algorithms should use
+                            // the whole range 1024-65535.
+                            let rand_port_range = Uniform::new_inclusive(1_024, u16::MAX);
+                            let mut rand = rand::thread_rng();
+                            SocketAddr::new(
+                                this.bind_address.ip(),
+                                rand_port_range.sample(&mut rand),
+                            )
+                        }
+                        _ => this.bind_address,
+                    };
+
+                    Some(Box::pin(
+                        this.provider.bind_udp(bind_addr, this.name_server),
+                    ))
                 }
             }
-
-            debug!("could not get next random port, falling back to OS assignment");
-            // When no free port was found after 10 tries let the OS assign one.
-            // This is needed in cases where almost all udp ports are in use on the host
-            // so the chance of finding a free is very low and it could spam 1000s of bind
-            // calls without finding a free one until the future is canceled.
         }
-        // Use port that was specified in bind address.
-        (*self.closure)(self.bind_address, self.name_server)
-            .as_mut()
-            .poll(cx)
     }
 }
+
+const ATTEMPT_RANDOM: usize = 10;
 
 #[cfg(feature = "tokio-runtime")]
 #[async_trait]
@@ -351,7 +333,7 @@ impl UdpSocket for tokio::net::UdpSocket {
 #[cfg(feature = "tokio-runtime")]
 #[async_trait]
 impl DnsUdpSocket for tokio::net::UdpSocket {
-    type Time = crate::TokioTime;
+    type Time = crate::runtime::TokioTime;
 
     fn poll_recv_from(
         &self,
@@ -379,30 +361,37 @@ impl DnsUdpSocket for tokio::net::UdpSocket {
 #[cfg(feature = "tokio-runtime")]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    use tokio::{net::UdpSocket as TokioUdpSocket, runtime::Runtime};
+    use tokio::runtime::Runtime;
+
+    use crate::runtime::TokioRuntimeProvider;
 
     #[test]
     fn test_next_random_socket() {
         use crate::tests::next_random_socket_test;
         let io_loop = Runtime::new().expect("failed to create tokio runtime");
-        next_random_socket_test::<TokioUdpSocket, Runtime>(io_loop)
+        let provider = TokioRuntimeProvider::new();
+        next_random_socket_test(io_loop, provider)
     }
 
     #[test]
     fn test_udp_stream_ipv4() {
         use crate::tests::udp_stream_test;
         let io_loop = Runtime::new().expect("failed to create tokio runtime");
-        io_loop.block_on(udp_stream_test::<TokioUdpSocket>(IpAddr::V4(
-            Ipv4Addr::new(127, 0, 0, 1),
-        )));
+        let provider = TokioRuntimeProvider::new();
+        io_loop.block_on(udp_stream_test(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            provider,
+        ));
     }
 
     #[test]
     fn test_udp_stream_ipv6() {
         use crate::tests::udp_stream_test;
         let io_loop = Runtime::new().expect("failed to create tokio runtime");
-        io_loop.block_on(udp_stream_test::<TokioUdpSocket>(IpAddr::V6(
-            Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
-        )));
+        let provider = TokioRuntimeProvider::new();
+        io_loop.block_on(udp_stream_test(
+            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)),
+            provider,
+        ));
     }
 }
