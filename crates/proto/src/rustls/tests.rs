@@ -9,10 +9,12 @@
 
 use alloc::borrow::ToOwned;
 #[cfg(feature = "std")]
+use alloc::string::ToString;
+#[cfg(feature = "std")]
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::net::SocketAddr;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use core::vec::Vec;
 #[cfg(feature = "std")]
 use std::env;
 #[cfg(feature = "std")]
@@ -22,7 +24,7 @@ use std::io::{Read, Write};
 #[cfg(feature = "std")]
 use std::sync::atomic;
 #[cfg(feature = "std")]
-use std::{thread, time};
+use std::{println, thread, time};
 
 use openssl::pkey::PKey;
 use openssl::ssl::*;

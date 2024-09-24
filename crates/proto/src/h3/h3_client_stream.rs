@@ -460,6 +460,7 @@ impl Future for H3ClientResponse {
 mod tests {
     use alloc::string::ToString;
     use std::net::SocketAddr;
+    use std::println;
     use std::str::FromStr;
 
     use rustls::KeyLogFile;

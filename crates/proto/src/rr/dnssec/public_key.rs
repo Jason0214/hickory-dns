@@ -7,14 +7,12 @@
 
 //! Public Key implementations for supported key types
 
+use alloc::vec::Vec;
+
 #[cfg(not(any(feature = "dnssec-openssl", feature = "dnssec-ring")))]
 use core::marker::PhantomData;
-
 #[cfg(all(not(feature = "dnssec-ring"), feature = "dnssec-openssl"))]
-use alloc::vec::Vec;
-use openssl::bn::BigNum;
-#[cfg(all(not(feature = "dnssec-ring"), feature = "dnssec-openssl"))]
-use openssl::bn::BigNumContext;
+use openssl::bn::{BigNum, BigNumContext};
 #[cfg(all(not(feature = "dnssec-ring"), feature = "dnssec-openssl"))]
 use openssl::ec::{EcGroup, EcKey, EcPoint};
 #[cfg(all(not(feature = "dnssec-ring"), feature = "dnssec-openssl"))]
