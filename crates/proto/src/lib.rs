@@ -38,8 +38,6 @@ extern crate std;
 extern crate alloc;
 
 #[cfg(not(feature = "std"))]
-use const_random::const_random;
-#[cfg(not(feature = "std"))]
 use core::cell::RefCell;
 #[cfg(not(feature = "std"))]
 use critical_section::Mutex;
@@ -61,7 +59,7 @@ use rand::distributions::{Distribution, Standard};
 
 #[cfg(not(feature = "std"))]
 static SEEDED_RNG: Lazy<Mutex<RefCell<StdRng>>> =
-    Lazy::new(|| Mutex::new(RefCell::new(StdRng::seed_from_u64(const_random!(u64)))));
+    Lazy::new(|| Mutex::new(RefCell::new(StdRng::seed_from_u64(0u64))));
 
 /// Seed the RNG used to create random DNS IDs throughout the lib (no_std-only).
 #[cfg(not(feature = "std"))]

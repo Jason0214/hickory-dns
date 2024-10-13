@@ -96,7 +96,6 @@ backtrace = { workspace = true, optional = true }
 bitflags = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 cfg-if.workspace = true
-const-random = { version = "0.1.15" }
 critical-section = { version = "1.1.1" }
 data-encoding = { workspace = true, features = ["alloc"] }
 enum-as-inner.workspace = true
